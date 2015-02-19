@@ -113,7 +113,9 @@ def process(filename):
     with gzip.GzipFile(filename) as f:
         # One event per line.
         events = [line.decode("utf-8", errors="ignore") for line in f]
-        count = len(events)
+
+        icount = 0
+        scount = 0
 
         # One event per line.
         for n, line in enumerate(events):
@@ -121,20 +123,21 @@ def process(filename):
             try:
                 event = json.loads(line)
             except:
+                icount += 1
                 logging.warn("Failed on line {0} of {1}-{2:02d}-{3:02d}-{4}"
                              .format(n, year, month, day, hour))
                 continue
 
             # Get the user involved and skip if there isn't one.
-            actor = event["actor"]
-            attrs = event.get("actor_attributes", {})
-            if actor is None or attrs.get("type") != "User":
+            actor = event.get("actor", {})
+            if actor.get("login") == None or actor.get("login") == "":
+                icount += 1
                 # This was probably an anonymous event (like a gist event)
                 # or an organization event.
                 continue
 
             # Normalize the user name.
-            key = actor.lower()
+            key = actor.get("login").lower()
 
             # Get the type of event.
             evttype = event["type"]
@@ -172,8 +175,8 @@ def process(filename):
                            .format(key, evttype), hour, nevents)
 
             # Parse the name and owner of the affected repository.
-            repo = event.get("repository", {})
-            owner, name = repo.get("owner"), repo.get("name")
+            repo = event.get("repo", {})
+            owner, name = repo.get("name").split("/")
             if owner and name:
                 repo_name = "{0}/{1}".format(owner, name)
                 _redis_execute(pipe, "zincrby", "repo", repo_name, nevents)
@@ -203,10 +206,12 @@ def process(filename):
                         _redis_execute(pipe, "zincrby", "lang:{0}:user"
                                        .format(language), key, nevents)
 
+                scount += 1
+
         pipe.execute()
 
-        logging.info("Processed {0} events in {1} [{2:.2f} seconds]"
-                     .format(count, filename, time.time() - strt))
+        logging.info("Processed {0} events, ignored {1} in {2} [{3:.2f} seconds]"
+                     .format(scount, icount, filename, time.time() - strt))
 
 
 def fetch_and_process(year, month, day):
